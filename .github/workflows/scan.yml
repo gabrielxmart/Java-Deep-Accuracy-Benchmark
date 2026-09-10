@@ -21,9 +21,70 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
+    # Repository secrets are not exposed to PRs from forks.
+    if: >
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+
     steps:
+      # ============================================================
+      # Checkout
+      # ============================================================
+
       - name: Checkout benchmark
         uses: actions/checkout@v4
+
+      # ============================================================
+      # Materialize benchmark cases
+      # ============================================================
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Materialize benchmark cases
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Generating benchmark cases..."
+          python corpus/generate_cases.py
+
+      # ============================================================
+      # Prepare payload
+      # ============================================================
+
+      - name: Prepare cases-only scan payload
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! -d "cases" ]]; then
+            echo "::error::cases/ directory was not generated"
+            exit 1
+          fi
+
+          FILE_COUNT="$(find cases -type f | wc -l)"
+
+          if [[ "${FILE_COUNT}" -eq 0 ]]; then
+            echo "::error::cases/ directory is empty"
+            exit 1
+          fi
+
+          # Keep the same behavior from the previous benchmark workflow.
+          rm -f cases/typescript/tsconfig.json
+
+          echo "XGuardian scan payload prepared successfully."
+          echo "Scan directory: cases/"
+          echo "Files to be scanned: $(find cases -type f | wc -l)"
+          echo
+          echo "Payload:"
+          find cases -type f | sort
+
+      # ============================================================
+      # XGuardian configuration
+      # ============================================================
 
       - name: Validate XGuardian configuration
         shell: bash
@@ -43,6 +104,13 @@ jobs:
             exit 1
           fi
 
+          echo "XGuardian configuration is valid."
+          echo "Application ID: ${XGUARDIAN_APP_ID}"
+
+      # ============================================================
+      # XGuardian SAST
+      # ============================================================
+
       - name: Run XGuardian SAST benchmark
         id: xguardian
         uses: xguardian-actions/actions/sast@development
@@ -53,6 +121,10 @@ jobs:
           translate: "true"
           pdf: "true"
           get_scan_id: "true"
+
+      # ============================================================
+      # Summary
+      # ============================================================
 
       - name: Publish XGuardian scan metadata
         if: success()
@@ -71,6 +143,6 @@ jobs:
             echo "- Scan ID: \`${SCAN_ID}\`"
             echo "- Scan version: \`${SCAN_VERSION}\`"
             echo "- Results: ${SCAN_URL}"
-            echo "- Scanned directory: \`cases/\`"
+            echo "- Scanned directory: \`cases/\` only"
             echo "- XGuardian Action: \`xguardian-actions/actions/sast@development\`"
           } >> "$GITHUB_STEP_SUMMARY"
