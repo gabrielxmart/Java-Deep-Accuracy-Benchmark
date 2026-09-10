@@ -1,0 +1,76 @@
+name: XGuardian SAST Accuracy Benchmark
+
+on:
+  push:
+    branches:
+      - main
+      - feat/**
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xguardian-sast-accuracy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sast-accuracy-scan:
+    name: Run XGuardian SAST Benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout benchmark
+        uses: actions/checkout@v4
+
+      - name: Validate XGuardian configuration
+        shell: bash
+        env:
+          XGUARDIAN_TOKEN: ${{ secrets.XGUARDIAN_TOKEN }}
+          XGUARDIAN_APP_ID: ${{ vars.XGUARDIAN_APP_ID }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${XGUARDIAN_TOKEN}" ]]; then
+            echo "::error::Missing repository secret XGUARDIAN_TOKEN"
+            exit 1
+          fi
+
+          if [[ ! "${XGUARDIAN_APP_ID}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::XGUARDIAN_APP_ID must be a positive numeric application ID"
+            exit 1
+          fi
+
+      - name: Run XGuardian SAST benchmark
+        id: xguardian
+        uses: xguardian-actions/actions/sast@development
+        with:
+          token: ${{ secrets.XGUARDIAN_TOKEN }}
+          app_id: ${{ vars.XGUARDIAN_APP_ID }}
+          scan_directory: "cases"
+          translate: "true"
+          pdf: "true"
+          get_scan_id: "true"
+
+      - name: Publish XGuardian scan metadata
+        if: success()
+        shell: bash
+        env:
+          APP_ID: ${{ steps.xguardian.outputs.app_id }}
+          SCAN_ID: ${{ steps.xguardian.outputs.scan_id }}
+          SCAN_URL: ${{ steps.xguardian.outputs.scan_url }}
+          SCAN_VERSION: ${{ steps.xguardian.outputs.scan_version }}
+        run: |
+          {
+            echo "## XGuardian SAST Accuracy Benchmark"
+            echo
+            echo "- Environment: \`development\`"
+            echo "- App ID: \`${APP_ID}\`"
+            echo "- Scan ID: \`${SCAN_ID}\`"
+            echo "- Scan version: \`${SCAN_VERSION}\`"
+            echo "- Results: ${SCAN_URL}"
+            echo "- Scanned directory: \`cases/\`"
+            echo "- XGuardian Action: \`xguardian-actions/actions/sast@development\`"
+          } >> "$GITHUB_STEP_SUMMARY"
