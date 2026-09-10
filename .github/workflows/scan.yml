@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
-    # Repository secrets are not exposed to PRs from forks.
+    # Secrets are not available to pull requests from forks.
     if: >
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -35,52 +35,34 @@ jobs:
         uses: actions/checkout@v4
 
       # ============================================================
-      # Materialize benchmark cases
+      # Prepare XGuardian payload
       # ============================================================
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Materialize benchmark cases
+      - name: Prepare scan payload
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Generating benchmark cases..."
-          python corpus/generate_cases.py
+          SCAN_DIR="scan-target"
 
-      # ============================================================
-      # Prepare payload
-      # ============================================================
-
-      - name: Prepare cases-only scan payload
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ ! -d "cases" ]]; then
-            echo "::error::cases/ directory was not generated"
+          if [[ ! -d "${SCAN_DIR}" ]]; then
+            echo "::error::${SCAN_DIR}/ directory does not exist"
             exit 1
           fi
 
-          FILE_COUNT="$(find cases -type f | wc -l)"
+          JAVA_COUNT="$(find "${SCAN_DIR}" -type f -name '*.java' | wc -l | tr -d ' ')"
 
-          if [[ "${FILE_COUNT}" -eq 0 ]]; then
-            echo "::error::cases/ directory is empty"
+          if [[ "${JAVA_COUNT}" -eq 0 ]]; then
+            echo "::error::No Java files found inside ${SCAN_DIR}/"
             exit 1
           fi
 
-          # Keep the same behavior from the previous benchmark workflow.
-          rm -f cases/typescript/tsconfig.json
-
-          echo "XGuardian scan payload prepared successfully."
-          echo "Scan directory: cases/"
-          echo "Files to be scanned: $(find cases -type f | wc -l)"
+          echo "XGuardian scan payload ready."
+          echo "Scan directory: ${SCAN_DIR}/"
+          echo "Java files: ${JAVA_COUNT}"
           echo
-          echo "Payload:"
-          find cases -type f | sort
+          echo "Payload structure:"
+          find "${SCAN_DIR}" -maxdepth 5 -type d | sort
 
       # ============================================================
       # XGuardian configuration
@@ -117,7 +99,7 @@ jobs:
         with:
           token: ${{ secrets.XGUARDIAN_TOKEN }}
           app_id: ${{ vars.XGUARDIAN_APP_ID }}
-          scan_directory: "cases"
+          scan_directory: "scan-target"
           translate: "true"
           pdf: "true"
           get_scan_id: "true"
@@ -143,6 +125,6 @@ jobs:
             echo "- Scan ID: \`${SCAN_ID}\`"
             echo "- Scan version: \`${SCAN_VERSION}\`"
             echo "- Results: ${SCAN_URL}"
-            echo "- Scanned directory: \`cases/\` only"
+            echo "- Scanned directory: \`scan-target/\` only"
             echo "- XGuardian Action: \`xguardian-actions/actions/sast@development\`"
           } >> "$GITHUB_STEP_SUMMARY"
