@@ -1,0 +1,153 @@
+name: XGuardian SAST Accuracy Benchmark - Production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xguardian-sast-accuracy-production
+  cancel-in-progress: false
+
+jobs:
+  sast-accuracy-scan:
+    name: Run XGuardian SAST Benchmark - Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      # ============================================================
+      # Checkout do benchmark
+      # ============================================================
+
+      - name: Checkout Java Deep Accuracy Benchmark
+        uses: actions/checkout@v4
+        with:
+          repository: gabrielxmart/Java-Deep-Accuracy-Benchmark
+          ref: main
+          fetch-depth: 1
+
+      # ============================================================
+      # Confirmar checkout
+      # ============================================================
+
+      - name: Inspect benchmark checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Repository:"
+          git remote -v
+
+          echo
+          echo "Commit:"
+          git rev-parse HEAD
+
+          echo
+          echo "Working directory:"
+          pwd
+
+          echo
+          echo "Repository root:"
+          ls -la
+
+          echo
+          echo "scan-target structure:"
+          find scan-target -maxdepth 5 -type d | sort
+
+      # ============================================================
+      # Preparar payload
+      # ============================================================
+
+      - name: Prepare scan payload
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SCAN_DIR="scan-target"
+
+          if [[ ! -d "${SCAN_DIR}" ]]; then
+            echo "::error::${SCAN_DIR}/ directory does not exist"
+            exit 1
+          fi
+
+          JAVA_COUNT="$(
+            find "${SCAN_DIR}" -type f -name '*.java' |
+            wc -l |
+            tr -d ' '
+          )"
+
+          if [[ "${JAVA_COUNT}" -eq 0 ]]; then
+            echo "::error::No Java files found inside ${SCAN_DIR}/"
+            exit 1
+          fi
+
+          echo "Production scan payload ready."
+          echo "Scan directory: ${SCAN_DIR}/"
+          echo "Java files: ${JAVA_COUNT}"
+
+      # ============================================================
+      # Validar configuração de produção
+      # ============================================================
+
+      - name: Validate XGuardian Production configuration
+        shell: bash
+        env:
+          XGUARDIAN_TOKEN: ${{ secrets.XGUARDIAN_PROD_TOKEN }}
+          XGUARDIAN_APP_ID: ${{ vars.XGUARDIAN_PROD_APP_ID }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${XGUARDIAN_TOKEN}" ]]; then
+            echo "::error::Missing repository secret XGUARDIAN_PROD_TOKEN"
+            exit 1
+          fi
+
+          if [[ ! "${XGUARDIAN_APP_ID}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::XGUARDIAN_PROD_APP_ID must be a positive numeric application ID"
+            exit 1
+          fi
+
+          echo "XGuardian Production configuration is valid."
+          echo "Application ID: ${XGUARDIAN_APP_ID}"
+
+      # ============================================================
+      # XGuardian SAST - Produção
+      # ============================================================
+
+      - name: Run XGuardian SAST benchmark - Production
+        id: xguardian
+        uses: xguardian-actions/actions/sast@main
+        with:
+          token: ${{ secrets.XGUARDIAN_PROD_TOKEN }}
+          app_id: ${{ vars.XGUARDIAN_PROD_APP_ID }}
+          scan_directory: "scan-target"
+          translate: "true"
+          pdf: "true"
+          get_scan_id: "true"
+
+      # ============================================================
+      # Summary
+      # ============================================================
+
+      - name: Publish XGuardian Production scan metadata
+        if: success()
+        shell: bash
+        env:
+          APP_ID: ${{ steps.xguardian.outputs.app_id }}
+          SCAN_ID: ${{ steps.xguardian.outputs.scan_id }}
+          SCAN_URL: ${{ steps.xguardian.outputs.scan_url }}
+          SCAN_VERSION: ${{ steps.xguardian.outputs.scan_version }}
+        run: |
+          {
+            echo "## XGuardian SAST Accuracy Benchmark - Production"
+            echo
+            echo "- Environment: \`production\`"
+            echo "- App ID: \`${APP_ID}\`"
+            echo "- Scan ID: \`${SCAN_ID}\`"
+            echo "- Scan version: \`${SCAN_VERSION}\`"
+            echo "- Results: ${SCAN_URL}"
+            echo "- Scanned directory: \`scan-target/\` only"
+            echo "- XGuardian Action: \`xguardian-actions/actions/sast@main\`"
+          } >> "$GITHUB_STEP_SUMMARY"
